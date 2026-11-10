@@ -11,3 +11,10 @@ __pycache__/
 evals/results/
 build/
 dist/
+
+# local Lambda test scratch files
+body.json
+out.json
+payload.json
+live.json
+health.json

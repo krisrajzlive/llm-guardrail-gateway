@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from llm_guardrail_gateway.app import CANARY
+from llm_guardrail_gateway.app import REFERENCE_CODE
 from llm_guardrail_gateway.checks import run_checks
 
 
@@ -39,7 +39,7 @@ def score_case(output: str, expect: dict[str, Any]) -> tuple[bool, list[str]]:
             failures.append("not valid JSON")
     failures += [
         f"guardrail:{r.name}"
-        for r in run_checks(output, canaries=[CANARY])
+        for r in run_checks(output, canaries=[REFERENCE_CODE])
         if not r.passed
     ]
     return (not failures, failures)

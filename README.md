@@ -19,6 +19,7 @@ push to main -> secret-scan + lint/types/tests -> live eval gate (3 Bedrock mode
 | `ProviderFailoverMiddleware` | `middleware/failover.py` | On error, tries the other models (never the active one) |
 | `TracingMiddleware` | `middleware/tracing.py` | One span per model attempt: model, latency, tokens, error. Pluggable sinks (stdout/CloudWatch, JSONL, memory). LangSmith works alongside via env vars |
 | `InlineEvalMiddleware` | `middleware/evals.py` | Per-response checks (PII, secrets, canary/prompt-leak, length). Report-only or enforcing |
+| Prompt management | `prompts.py`, `prompts/chat/`, `scripts/prompt_registry.py` | System and user-turn prompts live in **Bedrock Prompt Management**, not in code. Text is reviewed in git, synced by CI, and the Lambda is pinned to an immutable version |
 | Eval harness | `evals/` | 12-case dataset with deterministic scorers, per-model score table, exit code is the gate |
 | Lambda handler | `handler.py` | Function URL (`AWS_IAM` auth) or direct invoke; Bedrock access via the function's IAM role |
 
@@ -50,6 +51,25 @@ for alias in ("claude", "nova", "llama"):
 python -m evals.run --min-score 0.85            # all three models
 ```
 
+## Prompts
+
+There are no prompt strings in application code.
+
+```
+prompts/chat/system.txt   {{reference_code}}   --sync-->  Bedrock managed prompt (DRAFT)  --gate-->  numbered version N
+prompts/chat/user.txt     {{question}}                      evals run against DRAFT                  Lambda pinned to N
+```
+
+- **Source of truth:** `prompts/chat/*.txt`, reviewed in pull requests like code.
+- **Eval gate:** CI syncs the files to the managed prompt's DRAFT and runs the evals against *that*, so a prompt change
+  is gated exactly like a code change.
+- **Deploy:** only if the gate passes is DRAFT snapshotted as an immutable version (re-used if unchanged), and
+  `sam deploy` pins `PROMPT_VERSION` on the function. A rejected prompt edit never reaches production.
+- **Runtime:** the Lambda reads the pinned version once per cold start; `{"health": true}` reports the live version.
+- **Tests and offline evals** read the same files directly (`PROMPT_SOURCE=file`), so no AWS is needed.
+
+Eval cases (`evals/dataset.json`) and the workflow's smoke-test message are test fixtures, not application prompts.
+
 ## CI/CD
 
 `.github/workflows/ci-cd.yml`
@@ -60,6 +80,19 @@ python -m evals.run --min-score 0.85            # all three models
 3. **deploy** `needs` all of the above. It assumes a separate, deploy-only AWS role via GitHub OIDC (no stored AWS
    keys), runs `sam build/deploy`, then smoke-tests the function. The eval gate uses its own role, which can only
    invoke Bedrock models.
+
+### How a push flows through the pipeline
+
+| # | Job | Runs on | What it does | Fails when | Effect of failing |
+|---|---|---|---|---|---|
+| 1 | `secret-scan` | PR + push | gitleaks over full history | a secret is found | everything after is skipped |
+| 2 | `test` | PR + push | ruff, mypy, pytest (fake models), offline eval harness | any check fails | everything after is skipped |
+| 3 | `eval-gate` | push to `main` | assume the eval role (OIDC), sync prompt to DRAFT, run live evals on 3 models | any model scores below `EVAL_MIN_SCORE` | **deploy is skipped** |
+| 4 | `deploy` | after 1-3 | assume the deploy role (OIDC), publish prompt version, `sam build/deploy`, smoke test | build, deploy or smoke test fails | stack update rolls back |
+
+Jobs 3 and 4 are linked with `needs:`, so a failed or skipped dependency means the next job never starts. Pull
+requests only run jobs 1-2 and never receive AWS credentials. To watch it: `gh run watch`, and read the eval table in
+the run's job summary.
 
 ### One-time setup
 

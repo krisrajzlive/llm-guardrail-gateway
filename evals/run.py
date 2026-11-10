@@ -19,8 +19,9 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
-from llm_guardrail_gateway.app import ask, build_agent
+from llm_guardrail_gateway.app import build_agent
 from llm_guardrail_gateway.models import ALIASES, override_models
+from llm_guardrail_gateway.prompts import ChatPrompt, FilePromptSource, prompt_source_from_env
 from llm_guardrail_gateway.sinks import ListSink
 from llm_guardrail_gateway.testing import ScriptedChatModel
 
@@ -30,15 +31,15 @@ DATASET = Path(__file__).with_name("dataset.json")
 RESULTS_DIR = Path(__file__).with_name("results")
 
 
-def run_model(alias: str, cases: list[dict[str, Any]]) -> dict[str, Any]:
+def run_model(alias: str, cases: list[dict[str, Any]], prompt: ChatPrompt) -> dict[str, Any]:
     sink = ListSink()
     # No failover noise in evals: a provider outage should fail the gate, not be masked.
-    agent = build_agent(sink=sink, default_alias=alias, enforce_inline_evals=False)
+    agent = build_agent(prompt=prompt, sink=sink, default_alias=alias, enforce_inline_evals=False)
     rows = []
     for case in cases:
         started = time.perf_counter()
         try:
-            output = ask(agent, case["prompt"], alias)
+            output = agent.ask(case["prompt"], alias)
             error = None
         except Exception as exc:
             output, error = "", f"{type(exc).__name__}: {exc}"[:200]
@@ -83,13 +84,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cases = json.loads(DATASET.read_text(encoding="utf-8"))
+    # Offline: the repo's prompt files. Live: the Bedrock managed prompt (PROMPT_ID, version DRAFT unless
+    # PROMPT_VERSION is set), i.e. exactly the prompt about to be deployed.
+    source = FilePromptSource("prompts/chat") if args.offline else prompt_source_from_env()
+    prompt = source.load()
+    print(f"prompt version under test: {prompt.version}\n")
     with ExitStack() as stack:
         if args.offline:
             answers = {c["prompt"]: c["offline_answer"] for c in cases}
             stack.enter_context(
                 override_models({a: ScriptedChatModel(answers=answers, model_name=a) for a in ALIASES})
             )
-        results = [run_model(alias, cases) for alias in args.models]
+        results = [run_model(alias, cases, prompt) for alias in args.models]
 
     table = render_table(results, args.min_score)
     print(table)

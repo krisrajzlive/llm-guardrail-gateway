@@ -37,8 +37,8 @@ def test_router_selects_model_per_request():
     sink = ListSink()
     with override_models(fakes()):
         agent = app.build_agent(sink=sink)
-        assert app.ask(agent, "hi", "nova") == "from-nova"
-        assert app.ask(agent, "hi", "llama") == "from-llama"
+        assert agent.ask("hi", "nova") == "from-nova"
+        assert agent.ask("hi", "llama") == "from-llama"
     models = [s["model"] for s in sink.of_type("model_call")]
     assert models == ["fake-nova", "fake-llama"]
 
@@ -46,7 +46,7 @@ def test_router_selects_model_per_request():
 def test_tracing_records_tokens_and_latency():
     sink = ListSink()
     with override_models(fakes()):
-        app.ask(app.build_agent(sink=sink), "count these words please", "claude")
+        app.build_agent(sink=sink).ask("count these words please", "claude")
     (span,) = sink.of_type("model_call")
     assert span["status"] == "ok"
     assert span["input_tokens"] == 4 and span["output_tokens"] == 1
@@ -57,7 +57,7 @@ def test_failover_traces_failed_attempt_and_recovers():
     sink = ListSink()
     broken = ScriptedChatModel(model_name="fake-claude", fail_with="provider down")
     with override_models(fakes(claude=broken)):
-        out = app.ask(app.build_agent(sink=sink), "hi", "claude")
+        out = app.build_agent(sink=sink).ask("hi", "claude")
     assert out == "from-nova"
     statuses = [s["status"] for s in sink.of_type("model_call")]
     assert statuses == ["error", "ok"]
@@ -69,24 +69,24 @@ def test_failover_raises_when_all_providers_fail():
     sink = ListSink()
     down = {a: ScriptedChatModel(fail_with="down") for a in ("nova", "claude", "llama")}
     with override_models(down), pytest.raises(RuntimeError):
-        app.ask(app.build_agent(sink=sink), "hi", "claude")
+        app.build_agent(sink=sink).ask("hi", "claude")
 
 
 def test_inline_eval_blocks_canary_leak_when_enforced():
     sink = ListSink()
-    leaky = ScriptedChatModel(default=f"the code is {app.CANARY}")
+    leaky = ScriptedChatModel(default=f"the code is {app.REFERENCE_CODE}")
     with override_models(fakes(claude=leaky)):
-        out = app.ask(app.build_agent(sink=sink, enforce_inline_evals=True), "hi", "claude")
-    assert app.CANARY not in out
+        out = app.build_agent(sink=sink, enforce_inline_evals=True).ask("hi", "claude")
+    assert app.REFERENCE_CODE not in out
     (event,) = sink.of_type("inline_eval")
     assert not event["passed"] and "no_canary_leak" in event["failed_checks"]
 
 
 def test_inline_eval_report_only_mode_keeps_output():
-    leaky = ScriptedChatModel(default=f"the code is {app.CANARY}")
+    leaky = ScriptedChatModel(default=f"the code is {app.REFERENCE_CODE}")
     with override_models(fakes(claude=leaky)):
-        out = app.ask(app.build_agent(sink=ListSink(), enforce_inline_evals=False), "hi", "claude")
-    assert app.CANARY in out
+        out = app.build_agent(sink=ListSink(), enforce_inline_evals=False).ask("hi", "claude")
+    assert app.REFERENCE_CODE in out
 
 
 def test_pii_checks():

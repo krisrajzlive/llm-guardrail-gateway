@@ -79,6 +79,14 @@ Resources:
                 Effect: Allow
                 Action: cloudformation:*
                 Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/llm-guardrail-gateway/*
+              - Sid: PublishPromptVersion
+                Effect: Allow
+                Action: [bedrock:GetPrompt, bedrock:CreatePromptVersion]
+                Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:prompt/*
+              - Sid: ListPrompts
+                Effect: Allow
+                Action: bedrock:ListPrompts
+                Resource: "*"
               - Sid: SamTransform
                 Effect: Allow
                 Action: cloudformation:CreateChangeSet
@@ -136,6 +144,17 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 token.actions.githubusercontent.com:sub: !Join [":", [!If [HasSubjectPrefix, !Ref OidcSubjectPrefix, !Sub "repo:${GitHubRepo}"], "ref:refs/heads/main"]]
       Policies:
+        - PolicyName: sync-prompt-draft
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:UpdatePrompt, bedrock:GetPrompt]
+                Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:prompt/*
+              # Create/List do not support resource-level scoping (the prompt does not exist yet).
+              - Effect: Allow
+                Action: [bedrock:CreatePrompt, bedrock:ListPrompts]
+                Resource: "*"
         - PolicyName: invoke-bedrock-models
           PolicyDocument:
             Version: "2012-10-17"

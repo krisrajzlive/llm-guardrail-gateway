@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from typing import Any
 
-from .app import ask, build_agent
+from .app import GatewayAgent, build_agent
 from .models import ALIASES
 from .sinks import stdout_sink
 
 MAX_PROMPT_CHARS = 4000
-_agent: Any = None
+_agent: GatewayAgent | None = None
 
 
 def _response(status: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -41,7 +42,15 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
         return _response(400, {"error": f"invalid request: {exc}"})
 
     if body.get("health"):
-        return _response(200, {"status": "ok", "models": list(ALIASES)})
+        return _response(
+            200,
+            {
+                "status": "ok",
+                "models": list(ALIASES),
+                "prompt_id": os.environ.get("PROMPT_ID"),
+                "prompt_version": os.environ.get("PROMPT_VERSION"),
+            },
+        )
 
     prompt = body.get("prompt")
     alias = body.get("model", "claude")
@@ -55,7 +64,7 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
     try:
         if _agent is None:
             _agent = build_agent(sink=stdout_sink)
-        output = ask(_agent, prompt, alias)
+        output = _agent.ask(prompt, alias)
     except Exception as exc:
         stdout_sink({"type": "request_error", "error": f"{type(exc).__name__}: {exc}"[:300]})
         return _response(502, {"error": "upstream model call failed"})

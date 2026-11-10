@@ -43,6 +43,8 @@ jobs:
   # Gate 2 - push to main only: live evals against all three Bedrock models.
   # Not run on pull requests, so AWS credentials never reach fork code.
   eval-gate:
+    outputs:
+      prompt_id: ${{ steps.prompt.outputs.prompt_id }}
     needs: [test, secret-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -62,8 +64,13 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
       - name: Mask AWS account id in public logs
         run: echo "::add-mask::$(aws sts get-caller-identity --query Account --output text)"
-      - name: Live multi-LLM eval (exit 1 below threshold => deploy is skipped)
+      - name: Sync prompts/chat to the Bedrock managed prompt (DRAFT)
+        id: prompt
+        run: python scripts/prompt_registry.py sync --github-output
+      - name: Live multi-LLM eval of the DRAFT prompt (exit 1 below threshold => deploy is skipped)
         run: python -m evals.run --min-score ${{ vars.EVAL_MIN_SCORE || '0.85' }}
+        env:
+          PROMPT_ID: ${{ steps.prompt.outputs.prompt_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -86,6 +93,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install -e .
       - uses: aws-actions/setup-sam@v2
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -93,6 +101,9 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
       - name: Mask AWS account id in public logs
         run: echo "::add-mask::$(aws sts get-caller-identity --query Account --output text)"
+      - name: Publish the gated prompt as an immutable version
+        id: prompt
+        run: python scripts/prompt_registry.py publish --prompt-id "${{ needs.eval-gate.outputs.prompt_id }}" --github-output
       - name: Build
         run: sam build --template-file infra/template.yaml
       - name: Deploy
@@ -103,11 +114,15 @@ jobs:
           --capabilities CAPABILITY_IAM
           --no-confirm-changeset
           --no-fail-on-empty-changeset
+          --parameter-overrides
+          "PromptId=${{ steps.prompt.outputs.prompt_id }}"
+          "PromptVersion=${{ steps.prompt.outputs.prompt_version }}"
       - name: Smoke test (health, then one live call)
         run: |
           aws lambda invoke --function-name "$STACK_NAME" --cli-binary-format raw-in-base64-out \
             --payload '{"health": true}' health.json > /dev/null
           jq -e '.statusCode == 200' health.json
+          jq -e --arg v "${{ steps.prompt.outputs.prompt_version }}" '.body | fromjson | .prompt_version == $v' health.json
           aws lambda invoke --function-name "$STACK_NAME" --cli-binary-format raw-in-base64-out \
             --payload '{"prompt": "Reply with exactly the word: pong", "model": "claude"}' live.json > /dev/null
           jq -e '.statusCode == 200 and (.body | fromjson | .output | ascii_downcase | contains("pong"))' live.json

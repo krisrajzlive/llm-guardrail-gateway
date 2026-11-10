@@ -2,6 +2,19 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: llm-guardrail-gateway - multi-model (Amazon Bedrock) LLM agent with tracing and inline evals
 
+Parameters:
+  PromptId:
+    Type: String
+    Description: Bedrock managed prompt id (created/synced by scripts/prompt_registry.py)
+  PromptVersion:
+    Type: String
+    AllowedPattern: "^[0-9]+$"
+    Description: Immutable numbered prompt version the function is pinned to (never DRAFT)
+  ReferenceCode:
+    Type: String
+    Default: CANARY-7f3a91
+    Description: Leak-detection code substituted into the managed system prompt
+
 Resources:
   Function:
     Type: AWS::Serverless::Function
@@ -13,6 +26,11 @@ Resources:
       Architectures: [x86_64]
       MemorySize: 1024
       Timeout: 90
+      Environment:
+        Variables:
+          PROMPT_ID: !Ref PromptId
+          PROMPT_VERSION: !Ref PromptVersion
+          REFERENCE_CODE: !Ref ReferenceCode
       Policies:
         # Bedrock auth is the function's IAM role: no API keys exist anywhere in this system.
         - Statement:
@@ -21,6 +39,9 @@ Resources:
               Resource:
                 - arn:aws:bedrock:*::foundation-model/*
                 - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+            - Effect: Allow
+              Action: bedrock:GetPrompt
+              Resource: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:prompt/${PromptId}*
       FunctionUrlConfig:
         AuthType: AWS_IAM
 
