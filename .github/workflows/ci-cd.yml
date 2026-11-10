@@ -68,9 +68,11 @@ jobs:
         id: prompt
         run: python scripts/prompt_registry.py sync --github-output
       - name: Live multi-LLM eval of the DRAFT prompt (exit 1 below threshold => deploy is skipped)
-        run: python -m evals.run --min-score ${{ vars.EVAL_MIN_SCORE || '0.85' }}
+        run: python -m evals.run
         env:
           PROMPT_ID: ${{ steps.prompt.outputs.prompt_id }}
+          # optional repo variable: one threshold for every model (otherwise evals/thresholds.json)
+          EVAL_MIN_SCORE: ${{ vars.EVAL_MIN_SCORE }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

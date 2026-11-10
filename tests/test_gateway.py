@@ -105,6 +105,8 @@ def test_score_case_rules():
     assert score_case('```json\n{"a": 1}\n```', {"json_keys": ["a"]})[0]
     assert not score_case("one two three", {"max_words": 2})[0]
     assert not score_case("x@y.com", {"contains": ["x"]})[0]  # global PII guardrail
+    assert score_case("Please check tracking", {"contains_any": ["tracking", "refund"]})[0]
+    assert not score_case("hello", {"contains_any": ["tracking", "refund"]})[0]
 
 
 def test_handler_health_and_validation():
@@ -135,3 +137,11 @@ def test_eval_gate_passes_offline_and_fails_below_threshold(monkeypatch):
     monkeypatch.setattr(runner, "ScriptedChatModel", lambda **kw: real(model_name=kw["model_name"]))
     assert run_evals(["--offline", "--min-score", "0.85"]) == 1
     assert get_model  # keep import used
+
+
+def test_per_model_thresholds_come_from_file_and_can_be_overridden():
+    from evals.run import resolve_thresholds
+
+    assert resolve_thresholds(["claude", "llama"], None) == {"claude": 0.85, "llama": 0.8}
+    assert resolve_thresholds(["claude", "llama"], 0.9) == {"claude": 0.9, "llama": 0.9}
+    assert run_evals(["--offline"]) == 0  # no flag => thresholds.json

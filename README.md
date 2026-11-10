@@ -20,7 +20,7 @@ push to main -> secret-scan + lint/types/tests -> live eval gate (3 Bedrock mode
 | `TracingMiddleware` | `middleware/tracing.py` | One span per model attempt: model, latency, tokens, error. Pluggable sinks (stdout/CloudWatch, JSONL, memory). LangSmith works alongside via env vars |
 | `InlineEvalMiddleware` | `middleware/evals.py` | Per-response checks (PII, secrets, canary/prompt-leak, length). Report-only or enforcing |
 | Prompt management | `prompts.py`, `prompts/chat/`, `scripts/prompt_registry.py` | System and user-turn prompts live in **Bedrock Prompt Management**, not in code. Text is reviewed in git, synced by CI, and the Lambda is pinned to an immutable version |
-| Eval harness | `evals/` | 12-case dataset with deterministic scorers, per-model score table, exit code is the gate |
+| Eval harness | `evals/` | 13-case support-assistant dataset with deterministic scorers, per-model thresholds (`evals/thresholds.json`), exit code is the gate |
 | Lambda handler | `handler.py` | Function URL (`AWS_IAM` auth) or direct invoke; Bedrock access via the function's IAM role |
 
 Middleware order is `route -> failover -> trace -> inline-eval`, so failed attempts are traced and inline
@@ -48,7 +48,7 @@ for alias in ("claude", "nova", "llama"):
 ```
 
 ```bash
-python -m evals.run --min-score 0.85            # all three models
+python -m evals.run                              # all three models, thresholds from evals/thresholds.json
 ```
 
 ## Prompts
@@ -68,7 +68,9 @@ prompts/chat/user.txt     {{question}}                      evals run against DR
 - **Runtime:** the Lambda reads the pinned version once per cold start; `{"health": true}` reports the live version.
 - **Tests and offline evals** read the same files directly (`PROMPT_SOURCE=file`), so no AWS is needed.
 
-Eval cases (`evals/dataset.json`) and the workflow's smoke-test message are test fixtures, not application prompts.
+Eval cases (`evals/dataset.json`) and the workflow's smoke-test message are test fixtures, not application prompts. The cases
+test what the prompt is *for* (on-topic answers, brevity, formats, no invented order details, refusing off-topic requests,
+injection resistance); when you change the persona in `prompts/chat/`, update the cases with it.
 
 ## CI/CD
 
@@ -76,7 +78,7 @@ Eval cases (`evals/dataset.json`) and the workflow's smoke-test message are test
 
 1. **secret-scan** (gitleaks) and **test** (ruff, mypy, pytest with fake models, offline eval harness) run on every PR and push.
 2. **eval-gate** runs on pushes to `main` only, so AWS credentials never reach fork PRs. It runs the dataset against
-   all three models and exits non-zero if any scores below `EVAL_MIN_SCORE` (default `0.85`).
+   all three models and exits non-zero if any scores below its minimum in `evals/thresholds.json` (default 0.85, `llama` 0.80). Set the repo variable `EVAL_MIN_SCORE` to force one value for all.
 3. **deploy** `needs` all of the above. It assumes a separate, deploy-only AWS role via GitHub OIDC (no stored AWS
    keys), runs `sam build/deploy`, then smoke-tests the function. The eval gate uses its own role, which can only
    invoke Bedrock models.

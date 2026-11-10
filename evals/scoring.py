@@ -20,6 +20,8 @@ def score_case(output: str, expect: dict[str, Any]) -> tuple[bool, list[str]]:
     for needle in expect.get("contains", []):
         if needle.lower() not in output.lower():
             failures.append(f"missing {needle!r}")
+    if (options := expect.get("contains_any")) and not any(o.lower() in output.lower() for o in options):
+        failures.append(f"none of {options} present")
     for needle in expect.get("not_contains", []):
         if needle.lower() in output.lower():
             failures.append(f"contains forbidden {needle!r}")
