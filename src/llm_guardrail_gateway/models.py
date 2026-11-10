@@ -9,12 +9,13 @@ from contextlib import contextmanager
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
-# Alias -> "provider:model". Note the Google provider key is ``google_genai``
-# (underscore); the hyphenated form is not resolved by init_chat_model.
+# Alias -> "provider:model". Every alias runs on Amazon Bedrock (Converse API) so no third-party API
+# keys are needed: auth is the standard AWS credential chain (IAM role on Lambda / in CI, profile locally).
+# Cross-region inference profiles (``us.`` prefix) are used for the lightweight models.
 DEFAULT_MODEL_IDS: dict[str, str] = {
-    "openai": "openai:gpt-5.5",
-    "anthropic": "anthropic:claude-opus-4-8",
-    "google": "google_genai:gemini-3.1-pro-preview",
+    "claude": "bedrock_converse:us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "nova": "bedrock_converse:us.amazon.nova-lite-v1:0",
+    "llama": "bedrock_converse:us.meta.llama3-1-8b-instruct-v1:0",
 }
 ALIASES: tuple[str, ...] = tuple(DEFAULT_MODEL_IDS)
 
@@ -34,7 +35,12 @@ def get_model(alias: str) -> BaseChatModel:
     if alias in _overrides:
         return _overrides[alias]
     if alias not in _cache:
-        _cache[alias] = init_chat_model(model_id(alias), max_retries=2, timeout=45)
+        _cache[alias] = init_chat_model(
+            model_id(alias),
+            region_name=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+            temperature=0,
+            max_tokens=1024,
+        )
     return _cache[alias]
 
 

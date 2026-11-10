@@ -1,7 +1,7 @@
 """Offline/live eval runner and CI gate.
 
-    python -m evals.run --min-score 0.85                 # live: all three providers
-    python -m evals.run --models anthropic --min-score 0.8
+    python -m evals.run --min-score 0.85                 # live: all three Bedrock models
+    python -m evals.run --models claude --min-score 0.8
     python -m evals.run --offline --min-score 1.0        # deterministic harness check, no keys
 
 Exit code is 1 if any model scores below ``--min-score`` (this is the deploy gate).

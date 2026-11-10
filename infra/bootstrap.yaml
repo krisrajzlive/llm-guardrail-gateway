@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: One-time bootstrap - GitHub OIDC trust, scoped deploy role, SAM artifact bucket.
+Description: One-time bootstrap - GitHub OIDC trust, scoped deploy and eval roles, SAM artifact bucket.
 
 Parameters:
   GitHubRepo:
@@ -106,19 +106,41 @@ Resources:
                   - iam:ListRolePolicies
                   - iam:ListAttachedRolePolicies
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/llm-guardrail-gateway-*
-              - Sid: Secret
-                Effect: Allow
-                Action:
-                  - secretsmanager:CreateSecret
-                  - secretsmanager:DeleteSecret
-                  - secretsmanager:DescribeSecret
-                  - secretsmanager:GetResourcePolicy
-                  - secretsmanager:PutSecretValue
-                  - secretsmanager:UpdateSecret
-                  - secretsmanager:TagResource
-                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:llm-guardrail-gateway/*
+
+  # Used only by the live eval gate: can call Bedrock models, nothing else. Pushes to main only.
+  EvalRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: llm-guardrail-gateway-github-eval
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - MakeProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+      Policies:
+        - PolicyName: invoke-bedrock-models
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:InvokeModel]
+                Resource:
+                  - arn:aws:bedrock:*::foundation-model/*
+                  - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
 
 Outputs:
+  EvalRoleArn:
+    Value: !GetAtt EvalRole.Arn
   DeployRoleArn:
     Value: !GetAtt DeployRole.Arn
   ArtifactBucketName:

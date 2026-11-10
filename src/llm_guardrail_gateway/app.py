@@ -27,7 +27,7 @@ SYSTEM_PROMPT = (
 def build_agent(
     *,
     sink: Sink = stdout_sink,
-    default_alias: str = "anthropic",
+    default_alias: str = "claude",
     enforce_inline_evals: bool = True,
     tools: list[Any] | None = None,
 ) -> Any:
@@ -50,7 +50,7 @@ def build_agent(
     )
 
 
-def ask(agent: Any, prompt: str, model: str = "anthropic") -> str:
+def ask(agent: Any, prompt: str, model: str = "claude") -> str:
     result = agent.invoke(
         {"messages": [{"role": "user", "content": prompt}]},
         context=GatewayContext(model=model),

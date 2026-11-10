@@ -1,15 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: llm-guardrail-gateway - multi-provider LLM agent with tracing and inline evals
+Description: llm-guardrail-gateway - multi-model (Amazon Bedrock) LLM agent with tracing and inline evals
 
 Resources:
-  ProviderKeys:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: llm-guardrail-gateway/provider-keys
-      Description: JSON object of provider API keys; populated by the deploy workflow, never by CloudFormation.
-      SecretString: "{}"
-
   Function:
     Type: AWS::Serverless::Function
     Properties:
@@ -20,14 +13,14 @@ Resources:
       Architectures: [x86_64]
       MemorySize: 1024
       Timeout: 90
-      Environment:
-        Variables:
-          PROVIDER_KEYS_SECRET_ID: !Ref ProviderKeys
       Policies:
+        # Bedrock auth is the function's IAM role: no API keys exist anywhere in this system.
         - Statement:
             - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource: !Ref ProviderKeys
+              Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+              Resource:
+                - arn:aws:bedrock:*::foundation-model/*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
       FunctionUrlConfig:
         AuthType: AWS_IAM
 

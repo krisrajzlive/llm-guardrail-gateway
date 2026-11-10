@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from typing import Any
 
 from .app import ask, build_agent
@@ -13,22 +12,6 @@ from .sinks import stdout_sink
 
 MAX_PROMPT_CHARS = 4000
 _agent: Any = None
-_secrets_loaded = False
-
-
-def _load_secrets() -> None:
-    """Copy provider keys from Secrets Manager (JSON object) into the environment, once."""
-    global _secrets_loaded
-    secret_id = os.environ.get("PROVIDER_KEYS_SECRET_ID")
-    if _secrets_loaded or not secret_id:
-        return
-    import boto3  # provided by the Lambda runtime
-
-    raw = boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)["SecretString"]
-    for key, value in json.loads(raw).items():
-        if value:
-            os.environ.setdefault(key, str(value))
-    _secrets_loaded = True
 
 
 def _response(status: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -61,7 +44,7 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
         return _response(200, {"status": "ok", "models": list(ALIASES)})
 
     prompt = body.get("prompt")
-    alias = body.get("model", "anthropic")
+    alias = body.get("model", "claude")
     if not isinstance(prompt, str) or not prompt.strip():
         return _response(400, {"error": "'prompt' is required"})
     if len(prompt) > MAX_PROMPT_CHARS:
@@ -70,7 +53,6 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
         return _response(400, {"error": f"'model' must be one of {list(ALIASES)}"})
 
     try:
-        _load_secrets()
         if _agent is None:
             _agent = build_agent(sink=stdout_sink)
         output = ask(_agent, prompt, alias)

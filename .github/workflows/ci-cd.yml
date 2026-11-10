@@ -39,12 +39,15 @@ jobs:
       - name: Offline eval harness (deterministic, no keys)
         run: python -m evals.run --offline --min-score 1.0
 
-  # Gate 2 - push to main only: live evals against all three providers.
-  # Not run on pull requests, so provider keys are never exposed to fork code.
+  # Gate 2 - push to main only: live evals against all three Bedrock models.
+  # Not run on pull requests, so AWS credentials never reach fork code.
   eval-gate:
     needs: [test, secret-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,12 +55,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e ".[dev]"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_EVAL_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
       - name: Live multi-LLM eval (exit 1 below threshold => deploy is skipped)
         run: python -m evals.run --min-score ${{ vars.EVAL_MIN_SCORE || '0.85' }}
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -95,25 +98,11 @@ jobs:
           --capabilities CAPABILITY_IAM
           --no-confirm-changeset
           --no-fail-on-empty-changeset
-      - name: Sync provider keys to Secrets Manager
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-        run: |
-          jq -n \
-            --arg o "$OPENAI_API_KEY" --arg a "$ANTHROPIC_API_KEY" \
-            --arg g "$GOOGLE_API_KEY" --arg l "$LANGSMITH_API_KEY" \
-            '{OPENAI_API_KEY:$o, ANTHROPIC_API_KEY:$a, GOOGLE_API_KEY:$g, LANGSMITH_API_KEY:$l}' \
-          | aws secretsmanager put-secret-value \
-              --secret-id llm-guardrail-gateway/provider-keys \
-              --secret-string file:///dev/stdin > /dev/null
       - name: Smoke test (health, then one live call)
         run: |
           aws lambda invoke --function-name "$STACK_NAME" --cli-binary-format raw-in-base64-out \
             --payload '{"health": true}' health.json > /dev/null
           jq -e '.statusCode == 200' health.json
           aws lambda invoke --function-name "$STACK_NAME" --cli-binary-format raw-in-base64-out \
-            --payload '{"prompt": "Reply with exactly the word: pong", "model": "anthropic"}' live.json > /dev/null
+            --payload '{"prompt": "Reply with exactly the word: pong", "model": "claude"}' live.json > /dev/null
           jq -e '.statusCode == 200 and (.body | fromjson | .output | ascii_downcase | contains("pong"))' live.json

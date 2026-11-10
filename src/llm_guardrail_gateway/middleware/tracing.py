@@ -14,7 +14,7 @@ from ..sinks import Sink
 
 
 def _model_name(model: Any) -> str:
-    for attr in ("model_name", "model"):
+    for attr in ("model_name", "model_id", "model"):
         value = getattr(model, attr, None)
         if isinstance(value, str):
             return value

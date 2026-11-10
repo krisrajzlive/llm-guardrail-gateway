@@ -13,14 +13,14 @@ from llm_guardrail_gateway.testing import ScriptedChatModel
 
 def fakes(**kw):
     return {
-        "openai": ScriptedChatModel(model_name="fake-openai", default="from-openai"),
-        "anthropic": ScriptedChatModel(model_name="fake-anthropic", default="from-anthropic"),
-        "google": ScriptedChatModel(model_name="fake-google", default="from-google"),
+        "nova": ScriptedChatModel(model_name="fake-nova", default="from-nova"),
+        "claude": ScriptedChatModel(model_name="fake-claude", default="from-claude"),
+        "llama": ScriptedChatModel(model_name="fake-llama", default="from-llama"),
     } | kw
 
 
-def test_google_provider_uses_underscore_form():
-    assert DEFAULT_MODEL_IDS["google"].startswith("google_genai:")
+def test_all_aliases_use_bedrock_converse():
+    assert all(v.startswith("bedrock_converse:") for v in DEFAULT_MODEL_IDS.values())
 
 
 def test_unknown_alias_rejected():
@@ -29,24 +29,24 @@ def test_unknown_alias_rejected():
 
 
 def test_env_override(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_OPENAI", "openai:gpt-test")
-    assert model_id("openai") == "openai:gpt-test"
+    monkeypatch.setenv("LLM_MODEL_NOVA", "bedrock_converse:test")
+    assert model_id("nova") == "bedrock_converse:test"
 
 
 def test_router_selects_model_per_request():
     sink = ListSink()
     with override_models(fakes()):
         agent = app.build_agent(sink=sink)
-        assert app.ask(agent, "hi", "openai") == "from-openai"
-        assert app.ask(agent, "hi", "google") == "from-google"
+        assert app.ask(agent, "hi", "nova") == "from-nova"
+        assert app.ask(agent, "hi", "llama") == "from-llama"
     models = [s["model"] for s in sink.of_type("model_call")]
-    assert models == ["fake-openai", "fake-google"]
+    assert models == ["fake-nova", "fake-llama"]
 
 
 def test_tracing_records_tokens_and_latency():
     sink = ListSink()
     with override_models(fakes()):
-        app.ask(app.build_agent(sink=sink), "count these words please", "anthropic")
+        app.ask(app.build_agent(sink=sink), "count these words please", "claude")
     (span,) = sink.of_type("model_call")
     assert span["status"] == "ok"
     assert span["input_tokens"] == 4 and span["output_tokens"] == 1
@@ -55,28 +55,28 @@ def test_tracing_records_tokens_and_latency():
 
 def test_failover_traces_failed_attempt_and_recovers():
     sink = ListSink()
-    broken = ScriptedChatModel(model_name="fake-anthropic", fail_with="provider down")
-    with override_models(fakes(anthropic=broken)):
-        out = app.ask(app.build_agent(sink=sink), "hi", "anthropic")
-    assert out == "from-openai"
+    broken = ScriptedChatModel(model_name="fake-claude", fail_with="provider down")
+    with override_models(fakes(claude=broken)):
+        out = app.ask(app.build_agent(sink=sink), "hi", "claude")
+    assert out == "from-nova"
     statuses = [s["status"] for s in sink.of_type("model_call")]
     assert statuses == ["error", "ok"]
     (event,) = sink.of_type("failover")
-    assert event["from"] == "anthropic" and event["to"] == "openai"
+    assert event["from"] == "claude" and event["to"] == "nova"
 
 
 def test_failover_raises_when_all_providers_fail():
     sink = ListSink()
-    down = {a: ScriptedChatModel(fail_with="down") for a in ("openai", "anthropic", "google")}
+    down = {a: ScriptedChatModel(fail_with="down") for a in ("nova", "claude", "llama")}
     with override_models(down), pytest.raises(RuntimeError):
-        app.ask(app.build_agent(sink=sink), "hi", "anthropic")
+        app.ask(app.build_agent(sink=sink), "hi", "claude")
 
 
 def test_inline_eval_blocks_canary_leak_when_enforced():
     sink = ListSink()
     leaky = ScriptedChatModel(default=f"the code is {app.CANARY}")
-    with override_models(fakes(anthropic=leaky)):
-        out = app.ask(app.build_agent(sink=sink, enforce_inline_evals=True), "hi", "anthropic")
+    with override_models(fakes(claude=leaky)):
+        out = app.ask(app.build_agent(sink=sink, enforce_inline_evals=True), "hi", "claude")
     assert app.CANARY not in out
     (event,) = sink.of_type("inline_eval")
     assert not event["passed"] and "no_canary_leak" in event["failed_checks"]
@@ -84,8 +84,8 @@ def test_inline_eval_blocks_canary_leak_when_enforced():
 
 def test_inline_eval_report_only_mode_keeps_output():
     leaky = ScriptedChatModel(default=f"the code is {app.CANARY}")
-    with override_models(fakes(anthropic=leaky)):
-        out = app.ask(app.build_agent(sink=ListSink(), enforce_inline_evals=False), "hi", "anthropic")
+    with override_models(fakes(claude=leaky)):
+        out = app.ask(app.build_agent(sink=ListSink(), enforce_inline_evals=False), "hi", "claude")
     assert app.CANARY in out
 
 
@@ -115,10 +115,10 @@ def test_handler_health_and_validation():
 def test_handler_happy_path_and_upstream_error(monkeypatch):
     monkeypatch.setattr(handler, "_agent", None)
     with override_models(fakes()):
-        res = handler.lambda_handler({"prompt": "hi", "model": "google"})
-    assert res["statusCode"] == 200 and json.loads(res["body"])["output"] == "from-google"
+        res = handler.lambda_handler({"prompt": "hi", "model": "llama"})
+    assert res["statusCode"] == 200 and json.loads(res["body"])["output"] == "from-llama"
     monkeypatch.setattr(handler, "_agent", None)
-    down = {a: ScriptedChatModel(fail_with="down") for a in ("openai", "anthropic", "google")}
+    down = {a: ScriptedChatModel(fail_with="down") for a in ("nova", "claude", "llama")}
     with override_models(down):
         assert handler.lambda_handler({"prompt": "hi"})["statusCode"] == 502
 

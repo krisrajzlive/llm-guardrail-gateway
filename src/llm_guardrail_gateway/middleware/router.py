@@ -15,13 +15,13 @@ from ..models import get_model
 class GatewayContext:
     """Per-invocation context: which provider alias should serve this request."""
 
-    model: str = "anthropic"
+    model: str = "claude"
 
 
 class ModelRouterMiddleware(AgentMiddleware):
     """Swap the request's model for the alias named in ``context.model``."""
 
-    def __init__(self, default_alias: str = "anthropic") -> None:
+    def __init__(self, default_alias: str = "claude") -> None:
         super().__init__()
         self._default = default_alias
 
