@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: llm-guardrail-gateway - multi-provider LLM agent with tracing and inline evals
+
+Resources:
+  ProviderKeys:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: llm-guardrail-gateway/provider-keys
+      Description: JSON object of provider API keys; populated by the deploy workflow, never by CloudFormation.
+      SecretString: "{}"
+
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: llm-guardrail-gateway
+      CodeUri: ../src/
+      Handler: llm_guardrail_gateway.handler.lambda_handler
+      Runtime: python3.12
+      Architectures: [x86_64]
+      MemorySize: 1024
+      Timeout: 90
+      Environment:
+        Variables:
+          PROVIDER_KEYS_SECRET_ID: !Ref ProviderKeys
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref ProviderKeys
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+  FunctionUrl:
+    Description: SigV4-signed (AWS_IAM) endpoint
+    Value: !GetAtt FunctionUrl.FunctionUrl

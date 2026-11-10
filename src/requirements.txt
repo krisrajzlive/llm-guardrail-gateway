@@ -1,0 +1,4 @@
+langchain>=1.4,<2
+langchain-openai>=1.7,<2
+langchain-anthropic>=1.7,<2
+langchain-google-genai>=4.4,<5
