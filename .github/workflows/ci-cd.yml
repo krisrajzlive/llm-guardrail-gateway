@@ -60,6 +60,8 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_EVAL_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+      - name: Mask AWS account id in public logs
+        run: echo "::add-mask::$(aws sts get-caller-identity --query Account --output text)"
       - name: Live multi-LLM eval (exit 1 below threshold => deploy is skipped)
         run: python -m evals.run --min-score ${{ vars.EVAL_MIN_SCORE || '0.85' }}
       - uses: actions/upload-artifact@v4
@@ -89,6 +91,8 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+      - name: Mask AWS account id in public logs
+        run: echo "::add-mask::$(aws sts get-caller-identity --query Account --output text)"
       - name: Build
         run: sam build --template-file infra/template.yaml
       - name: Deploy
