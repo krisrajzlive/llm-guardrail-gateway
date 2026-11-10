@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+# Middleware only knows this signature, so adding a new destination (a queue, a metrics client)
+# never requires touching the middleware itself.
 Sink = Callable[[dict[str, Any]], None]
 
 
@@ -27,7 +29,9 @@ class ListSink:
 
 def stdout_sink(event: dict[str, Any]) -> None:
     """One JSON object per line; on Lambda this lands in CloudWatch Logs."""
+    # default=str so an unexpected non-JSON value (exception, datetime) never breaks a request.
     sys.stdout.write(json.dumps(event, default=str) + "\n")
+    # Flush so lines appear immediately, not only when the Lambda container is frozen.
     sys.stdout.flush()
 
 
@@ -37,6 +41,7 @@ class JsonlSink:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        # Appends can come from several threads (LangChain may run model calls concurrently).
         self._lock = threading.Lock()
 
     def __call__(self, event: dict[str, Any]) -> None:
@@ -45,6 +50,8 @@ class JsonlSink:
 
 
 def fan_out(*sinks: Sink) -> Sink:
+    """Combine several sinks into one, e.g. stdout for CloudWatch plus a local file."""
+
     def _emit(event: dict[str, Any]) -> None:
         for sink in sinks:
             sink(event)

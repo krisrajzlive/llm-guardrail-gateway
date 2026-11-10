@@ -14,6 +14,8 @@ from ..sinks import Sink
 
 
 def _model_name(model: Any) -> str:
+    # Chat model classes expose their id under different attribute names (ChatBedrockConverse uses
+    # model_id), so try the common ones and fall back to the class name.
     for attr in ("model_name", "model_id", "model"):
         value = getattr(model, attr, None)
         if isinstance(value, str):
@@ -22,6 +24,7 @@ def _model_name(model: Any) -> str:
 
 
 def _last_ai_message(response: Any) -> AIMessage | None:
+    # The handler may return a ModelResponse (with .result) or a bare message; handle both.
     messages = getattr(response, "result", None) or [response]
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
@@ -49,13 +52,15 @@ class TracingMiddleware(AgentMiddleware):
             "model": _model_name(request.model),
             "n_messages": len(request.messages),
         }
+        # perf_counter is monotonic, so latency is unaffected by system clock changes.
         start = time.perf_counter()
         try:
             response = handler(request)
         except Exception as exc:
+            # Record the failure, then re-raise so the failover middleware (outside us) can react.
             span.update(
                 status="error",
-                error=f"{type(exc).__name__}: {exc}"[:300],
+                error=f"{type(exc).__name__}: {exc}"[:300],  # truncated to keep log lines bounded
                 latency_ms=round((time.perf_counter() - start) * 1000, 1),
             )
             self._sink(span)
@@ -65,6 +70,7 @@ class TracingMiddleware(AgentMiddleware):
         span.update(
             status="ok",
             latency_ms=round((time.perf_counter() - start) * 1000, 1),
+            # Providers do not always report usage, so these can be None.
             input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"),
         )

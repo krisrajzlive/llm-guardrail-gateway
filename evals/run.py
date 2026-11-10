@@ -33,8 +33,10 @@ RESULTS_DIR = Path(__file__).with_name("results")
 
 
 def run_model(alias: str, cases: list[dict[str, Any]], prompt: ChatPrompt) -> dict[str, Any]:
+    """Run every case against one model alias and return its score plus per-case detail."""
     sink = ListSink()
     # No failover noise in evals: a provider outage should fail the gate, not be masked.
+    # Inline enforcement is off so we score the model's raw output, not the sanitised refusal.
     agent = build_agent(prompt=prompt, sink=sink, default_alias=alias, enforce_inline_evals=False)
     rows = []
     for case in cases:
@@ -43,6 +45,7 @@ def run_model(alias: str, cases: list[dict[str, Any]], prompt: ChatPrompt) -> di
             output = agent.ask(case["prompt"], alias)
             error = None
         except Exception as exc:
+            # A crashed call counts as a failed case rather than aborting the whole run.
             output, error = "", f"{type(exc).__name__}: {exc}"[:200]
         passed, failures = (False, [error]) if error else score_case(output, case["expect"])
         rows.append(
@@ -51,7 +54,7 @@ def run_model(alias: str, cases: list[dict[str, Any]], prompt: ChatPrompt) -> di
                 "passed": passed,
                 "failures": failures,
                 "latency_s": round(time.perf_counter() - started, 2),
-                "output": output[:300],
+                "output": output[:300],  # truncated: enough to debug a miss, small enough for CI artifacts
             }
         )
     failovers = len(sink.of_type("failover"))
@@ -70,10 +73,12 @@ def resolve_thresholds(models: list[str], override: float | None) -> dict[str, f
     if override is not None:
         return dict.fromkeys(models, override)
     config = json.loads(THRESHOLDS.read_text(encoding="utf-8"))
+    # Per-model entries win; anything unlisted uses "default".
     return {m: float(config.get(m, config["default"])) for m in models}
 
 
 def render_table(results: list[dict[str, Any]], thresholds: dict[str, float]) -> str:
+    """Markdown table; reused for the terminal and the GitHub Actions job summary."""
     lines = [
         "| model | score | min | p50 latency (s) | failed cases | gate |",
         "|---|---|---|---|---|---|",
@@ -94,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--min-score",
         type=float,
+        # An optional repo variable in CI can force one threshold for every model.
         default=float(os.environ["EVAL_MIN_SCORE"]) if os.environ.get("EVAL_MIN_SCORE") else None,
         help="override: one minimum for every model (default: evals/thresholds.json, or $EVAL_MIN_SCORE)",
     )
@@ -108,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"prompt version under test: {prompt.version}\n")
     with ExitStack() as stack:
         if args.offline:
+            # Every fake answers each case with its "offline_answer", so this run proves the harness,
+            # scorers and gate logic work end to end without spending a single model call.
             answers = {c["prompt"]: c["offline_answer"] for c in cases}
             stack.enter_context(
                 override_models({a: ScriptedChatModel(answers=answers, model_name=a) for a in ALIASES})
@@ -118,13 +126,16 @@ def main(argv: list[str] | None = None) -> int:
     table = render_table(results, thresholds)
     print(table)
     RESULTS_DIR.mkdir(exist_ok=True)
+    # Full per-case detail for debugging; CI uploads this file as an artifact.
     (RESULTS_DIR / "latest.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    # GITHUB_STEP_SUMMARY is set on Actions runners; appending here shows the table on the run page.
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write(f"### Eval gate\n\n{table}\n")
 
     failing = [r["model"] for r in results if r["score"] < thresholds[r["model"]]]
     if failing:
+        # The non-zero exit code IS the gate: GitHub marks this job failed, so `deploy` never starts.
         print(f"\nGATE FAILED for: {', '.join(failing)}", file=sys.stderr)
         return 1
     print("\nGATE PASSED")

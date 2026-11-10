@@ -15,7 +15,9 @@ class ScriptedChatModel(BaseChatModel):
 
     answers: dict[str, str] = {}
     default: str = "ok"
+    # When set, every call raises: used to exercise failover and the handler's 502 path.
     fail_with: str | None = None
+    # Shows up in trace spans, so tests can tell which "provider" answered.
     model_name: str = "scripted"
 
     @property
@@ -37,6 +39,7 @@ class ScriptedChatModel(BaseChatModel):
         # answer does not depend on how the managed prompt wraps the question.
         matches = [key for key in self.answers if key in prompt]
         text = self.answers[max(matches, key=len)] if matches else self.default
+        # Word counts stand in for token counts so tracing tests have realistic, predictable numbers.
         n_in, n_out = len(prompt.split()), len(text.split())
         message = AIMessage(
             content=text,

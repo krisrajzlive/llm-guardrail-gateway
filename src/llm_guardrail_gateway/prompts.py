@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+# Matches Bedrock's own ``{{variable}}`` syntax (optional inner spaces), so the same text works
+# locally and as a managed prompt.
 _VAR = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
@@ -21,9 +23,11 @@ def extract_variables(*templates: str) -> list[str]:
 
 
 def render(template: str, values: dict[str, str]) -> str:
+    # Fail loudly on a missing variable: a silently half-rendered prompt is worse than an error.
     missing = [v for v in extract_variables(template) if v not in values]
     if missing:
         raise ValueError(f"missing prompt variables: {missing}")
+    # A function replacement (not a string) so backslashes in values are never treated as regex escapes.
     return _VAR.sub(lambda m: str(values[m.group(1)]), template)
 
 
@@ -33,6 +37,7 @@ class ChatPrompt:
 
     system: str
     user: str
+    # "DRAFT" / a number when loaded from Bedrock; "file" or "local" otherwise. Surfaced in eval output.
     version: str = "local"
 
     @property
@@ -47,6 +52,8 @@ class ChatPrompt:
 
 
 class PromptSource(Protocol):
+    """Anything that can produce a ChatPrompt; lets tests and production use the same code path."""
+
     def load(self) -> ChatPrompt: ...
 
 
@@ -57,6 +64,7 @@ class FilePromptSource:
         self._dir = Path(directory)
 
     def load(self) -> ChatPrompt:
+        # strip() drops the trailing newline editors add, which would otherwise end up in the prompt.
         return ChatPrompt(
             system=(self._dir / "system.txt").read_text(encoding="utf-8").strip(),
             user=(self._dir / "user.txt").read_text(encoding="utf-8").strip(),
@@ -66,9 +74,11 @@ class FilePromptSource:
 
 def chat_prompt_from_response(response: dict[str, Any]) -> ChatPrompt:
     """Convert a bedrock-agent ``get_prompt`` response into a ChatPrompt."""
+    # We only ever create one variant ("default"), so the first one is the prompt.
     variant = response["variants"][0]
     chat = variant["templateConfiguration"]["chat"]
     system = "\n".join(block["text"] for block in chat.get("system", []) if "text" in block)
+    # The user turn is the first text block of the first user message.
     user = next(
         block["text"]
         for message in chat["messages"]
@@ -85,12 +95,14 @@ class BedrockPromptSource:
     def __init__(self, prompt_id: str, version: str = "DRAFT", client: Any = None) -> None:
         self._prompt_id = prompt_id
         self._version = version
+        # Injectable so tests can pass a fake client instead of calling AWS.
         self._client = client
 
     def load(self) -> ChatPrompt:
         client = self._client
         if client is None:
-            import boto3  # provided by the Lambda runtime
+            # Imported lazily: boto3 ships with the Lambda runtime and is not needed for offline runs.
+            import boto3
 
             region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
             client = boto3.client("bedrock-agent", region_name=region)
@@ -100,6 +112,7 @@ class BedrockPromptSource:
 
 def prompt_source_from_env() -> PromptSource:
     """Local: ``PROMPT_SOURCE=file`` (+ ``PROMPT_DIR``). Otherwise ``PROMPT_ID`` (+ ``PROMPT_VERSION``)."""
+    # Opting in to files must be explicit so production can never silently fall back to local text.
     if os.environ.get("PROMPT_SOURCE") == "file":
         return FilePromptSource(os.environ.get("PROMPT_DIR", "prompts/chat"))
     prompt_id = os.environ.get("PROMPT_ID")
@@ -108,4 +121,5 @@ def prompt_source_from_env() -> PromptSource:
             "PROMPT_ID is not set. Run `python scripts/prompt_registry.py sync` and export the id, "
             "or set PROMPT_SOURCE=file for local/offline use."
         )
+    # DRAFT is the default for the eval gate; the deployed Lambda always sets an explicit number.
     return BedrockPromptSource(prompt_id, os.environ.get("PROMPT_VERSION", "DRAFT"))

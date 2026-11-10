@@ -26,10 +26,12 @@ class InlineEvalMiddleware(AgentMiddleware):
         super().__init__()
         self._sink = sink
         self._canaries = tuple(canaries)
+        # Evals set this False: they want to score the raw output, not the sanitised one.
         self._enforce = enforce
 
     def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         last = state["messages"][-1]
+        # Skip tool-call turns: there is no user-facing text to check until the model gives its answer.
         if not isinstance(last, AIMessage) or last.tool_calls:
             return None
         results = run_checks(last.text, canaries=self._canaries)
@@ -43,5 +45,7 @@ class InlineEvalMiddleware(AgentMiddleware):
             }
         )
         if self._enforce and not passed:
+            # Returning a message with the SAME id replaces the original in the conversation state,
+            # so the unsafe text is never returned to the caller. None means "leave state unchanged".
             return {"messages": [AIMessage(content=BLOCKED_MESSAGE, id=last.id)]}
         return None

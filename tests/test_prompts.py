@@ -17,6 +17,7 @@ from llm_guardrail_gateway.sinks import ListSink
 from llm_guardrail_gateway.testing import ScriptedChatModel
 
 ROOT = Path(__file__).resolve().parent.parent
+# scripts/ is not a package, so load prompt_registry.py by path to test its functions directly.
 spec = importlib.util.spec_from_file_location("prompt_registry", ROOT / "scripts" / "prompt_registry.py")
 registry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(registry)
@@ -29,6 +30,7 @@ class FakeBedrockAgent:
         self.prompts = {}  # id -> {"name", "variants", "versions": {version: variants}}
 
     def list_prompts(self, promptIdentifier=None, nextToken=None):
+        # With an id, Bedrock lists that prompt's versions (DRAFT + numbered); without, all prompts.
         if promptIdentifier:
             p = self.prompts[promptIdentifier]
             versions = ["DRAFT", *p["versions"]]
@@ -71,6 +73,7 @@ def test_repo_prompt_has_expected_variables_and_no_code_copy():
 
 
 def test_missing_prompt_id_fails_loudly(monkeypatch):
+    # Production must never silently fall back to local files: no PROMPT_ID and no explicit opt-in = error.
     monkeypatch.delenv("PROMPT_SOURCE")
     monkeypatch.delenv("PROMPT_ID", raising=False)
     with pytest.raises(RuntimeError, match="PROMPT_ID"):
@@ -78,8 +81,9 @@ def test_missing_prompt_id_fails_loudly(monkeypatch):
 
 
 def test_agent_uses_rendered_managed_prompt():
-    seen = []
+    seen = []  # the exact messages each model call received
 
+    # Records what the model is actually sent, to prove the prompt is rendered from the managed text.
     class Recorder(ScriptedChatModel):
         def _generate(self, messages, *a, **kw):
             seen.append([(m.type, m.text) for m in messages])
@@ -96,6 +100,7 @@ def test_agent_uses_rendered_managed_prompt():
 
 def test_bedrock_source_reads_pinned_version():
     client = FakeBedrockAgent()
+    # Full round trip: git text -> managed DRAFT -> numbered version -> read back as the Lambda would.
     pid = registry.sync(client, ChatPrompt("s {{reference_code}}", "{{question}}"))["prompt_id"]
     version = registry.publish(client, pid)["prompt_version"]
     loaded = BedrockPromptSource(pid, version, client=client).load()
@@ -118,6 +123,7 @@ def test_sync_creates_then_updates_and_publish_is_idempotent():
 
 def test_registry_cli_writes_github_output(tmp_path, monkeypatch, capsys):
     out = tmp_path / "gh_output"
+    # GITHUB_OUTPUT is how a workflow step passes values (prompt id/version) to later steps and jobs.
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     client = FakeBedrockAgent()
     assert registry.main(["sync", "--github-output"], client=client) == 0

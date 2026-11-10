@@ -28,6 +28,8 @@ class ModelRouterMiddleware(AgentMiddleware):
     def wrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
     ) -> Any:
+        # Context is optional in LangChain, so fall back to the default alias if none was supplied.
         ctx = request.runtime.context
         alias = getattr(ctx, "model", None) or self._default
+        # request.override() returns a modified copy; the original request is never mutated.
         return handler(request.override(model=get_model(alias)))

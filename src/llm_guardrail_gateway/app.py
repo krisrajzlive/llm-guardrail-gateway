@@ -33,7 +33,9 @@ class GatewayAgent:
 
     def ask(self, question: str, model: str = "claude") -> str:
         result = self.agent.invoke(
+            # The user turn is rendered from the managed template, never built from a string in code.
             {"messages": [{"role": "user", "content": self.prompt.render_user(question=question)}]},
+            # The router middleware reads this to pick the Bedrock model for this one request.
             context=GatewayContext(model=model),
         )
         return str(result["messages"][-1].text)
@@ -53,15 +55,17 @@ def build_agent(
     production). Middleware order matters (first = outermost): route -> failover -> trace, so every
     attempt, including failed ones, is traced, and inline evals see only the final response.
     """
+    # Loaded once here (cold start); the Lambda pins an immutable version so this cannot drift.
     prompt = prompt or prompt_source_from_env().load()
-    agent = create_agent(  # type: ignore[misc]
+    agent = create_agent(  # type: ignore[misc]  # mypy cannot infer the context type var from the dataclass
+        # create_agent needs a base model; the router overrides it per request.
         model=get_model(default_alias),
         tools=tools or [],
         system_prompt=prompt.render_system(reference_code=REFERENCE_CODE),
         middleware=[
-            ModelRouterMiddleware(default_alias),
-            ProviderFailoverMiddleware(sink),
-            TracingMiddleware(sink),
+            ModelRouterMiddleware(default_alias),  # picks the model for this request
+            ProviderFailoverMiddleware(sink),  # retries on another model if that one errors
+            TracingMiddleware(sink),  # innermost model wrapper: records every attempt
             InlineEvalMiddleware(sink, canaries=[REFERENCE_CODE], enforce=enforce_inline_evals),
         ],
         context_schema=GatewayContext,
