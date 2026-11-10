@@ -126,5 +126,6 @@ jobs:
           jq -e '.statusCode == 200' health.json
           jq -e --arg v "${{ steps.prompt.outputs.prompt_version }}" '.body | fromjson | .prompt_version == $v' health.json
           aws lambda invoke --function-name "$STACK_NAME" --cli-binary-format raw-in-base64-out \
-            --payload '{"prompt": "Reply with exactly the word: pong", "model": "claude"}' live.json > /dev/null
-          jq -e '.statusCode == 200 and (.body | fromjson | .output | ascii_downcase | contains("pong"))' live.json
+            --payload '{"prompt": "How do I return an item?", "model": "claude"}' live.json > /dev/null
+          # on-topic for the support persona; assert a healthy, non-blocked answer rather than exact wording
+          jq -e '.statusCode == 200 and (.body | fromjson | .output | length > 20 and (contains("I can'"'"'t provide that response") | not))' live.json
