@@ -58,7 +58,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_EVAL_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_EVAL_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Live multi-LLM eval (exit 1 below threshold => deploy is skipped)
         run: python -m evals.run --min-score ${{ vars.EVAL_MIN_SCORE || '0.85' }}
@@ -87,7 +87,7 @@ jobs:
       - uses: aws-actions/setup-sam@v2
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Build
         run: sam build --template-file infra/template.yaml

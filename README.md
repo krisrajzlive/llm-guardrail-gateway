@@ -64,19 +64,20 @@ python -m evals.run --min-score 0.85            # all three models
 ### One-time setup
 
 ```bash
-# 1. AWS: OIDC provider + least-privilege deploy and eval roles + artifact bucket
-aws cloudformation deploy --stack-name llm-guardrail-gateway-bootstrap \
-  --template-file infra/bootstrap.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides GitHubRepo=<owner>/llm-guardrail-gateway
+# 1. AWS: OIDC provider + least-privilege deploy and eval roles + artifact bucket.
+#    New repos use immutable OIDC subject claims; read the prefix from GitHub:
+gh api repos/<owner>/llm-guardrail-gateway/actions/oidc/customization/sub --jq .sub_claim_prefix
+aws cloudformation deploy --stack-name llm-guardrail-gateway-bootstrap   --template-file infra/bootstrap.yaml --capabilities CAPABILITY_NAMED_IAM   --parameter-overrides GitHubRepo=<owner>/llm-guardrail-gateway OidcSubjectPrefix=<sub_claim_prefix>
 
-# 2. GitHub repository variables (from the stack outputs)
+# 2. GitHub configuration (from the stack outputs). Role ARNs go in secrets, not variables,
+#    so the account id is masked in public workflow logs.
 gh variable set AWS_REGION --body us-east-1
-gh variable set AWS_DEPLOY_ROLE_ARN --body <DeployRoleArn>
-gh variable set AWS_EVAL_ROLE_ARN --body <EvalRoleArn>
 gh variable set ARTIFACT_BUCKET --body <ArtifactBucketName>
+gh secret set AWS_DEPLOY_ROLE_ARN --body <DeployRoleArn>
+gh secret set AWS_EVAL_ROLE_ARN --body <EvalRoleArn>
 ```
 
-There are no secrets to configure. Create a `production` environment in the repository settings (optionally with
+There are no API keys to manage. Create a `production` environment in the repository settings (optionally with
 required reviewers for a manual approval before deploy), then protect `main` and require the `test` check.
 
 ### Calling the deployed function

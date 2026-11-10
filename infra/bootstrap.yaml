@@ -5,6 +5,13 @@ Parameters:
   GitHubRepo:
     Type: String
     Description: owner/name of the GitHub repository allowed to deploy
+  OidcSubjectPrefix:
+    Type: String
+    Default: ""
+    Description: >
+      Subject prefix of the repository's OIDC tokens. New repositories use immutable claims
+      (repo:<owner>@<owner-id>/<name>@<repo-id>); get it from
+      `gh api repos/<owner>/<name>/actions/oidc/customization/sub`. Empty falls back to repo:<owner>/<name>.
   CreateOidcProvider:
     Type: String
     Default: "true"
@@ -16,6 +23,7 @@ Parameters:
 
 Conditions:
   MakeProvider: !Equals [!Ref CreateOidcProvider, "true"]
+  HasSubjectPrefix: !Not [!Equals [!Ref OidcSubjectPrefix, ""]]
 
 Resources:
   ArtifactBucket:
@@ -60,8 +68,8 @@ Resources:
               # not the ref-form one, so both are allowed. PRs and other branches cannot deploy.
               StringLike:
                 token.actions.githubusercontent.com:sub:
-                  - !Sub repo:${GitHubRepo}:ref:refs/heads/main
-                  - !Sub repo:${GitHubRepo}:environment:production
+                  - !Join [":", [!If [HasSubjectPrefix, !Ref OidcSubjectPrefix, !Sub "repo:${GitHubRepo}"], "ref:refs/heads/main"]]
+                  - !Join [":", [!If [HasSubjectPrefix, !Ref OidcSubjectPrefix, !Sub "repo:${GitHubRepo}"], "environment:production"]]
       Policies:
         - PolicyName: deploy-llm-guardrail-gateway
           PolicyDocument:
@@ -126,7 +134,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+                token.actions.githubusercontent.com:sub: !Join [":", [!If [HasSubjectPrefix, !Ref OidcSubjectPrefix, !Sub "repo:${GitHubRepo}"], "ref:refs/heads/main"]]
       Policies:
         - PolicyName: invoke-bedrock-models
           PolicyDocument:
