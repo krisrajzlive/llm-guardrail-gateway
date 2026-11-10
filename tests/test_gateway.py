@@ -7,6 +7,7 @@ from evals.scoring import score_case
 from llm_guardrail_gateway import app, handler
 from llm_guardrail_gateway.checks import find_pii, run_checks
 from llm_guardrail_gateway.models import DEFAULT_MODEL_IDS, get_model, model_id, override_models
+from llm_guardrail_gateway.prompts import ChatPrompt
 from llm_guardrail_gateway.sinks import ListSink
 from llm_guardrail_gateway.testing import ScriptedChatModel
 
@@ -46,7 +47,9 @@ def test_router_selects_model_per_request():
 def test_tracing_records_tokens_and_latency():
     sink = ListSink()
     with override_models(fakes()):
-        app.build_agent(sink=sink).ask("count these words please", "claude")
+        # Fixed prompt: this test must not depend on the production prompt wording.
+        prompt = ChatPrompt(system="s {{reference_code}}", user="{{question}}")
+        app.build_agent(prompt=prompt, sink=sink).ask("count these words please", "claude")
     (span,) = sink.of_type("model_call")
     assert span["status"] == "ok"
     assert span["input_tokens"] == 4 and span["output_tokens"] == 1

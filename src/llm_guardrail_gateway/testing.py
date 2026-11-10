@@ -33,7 +33,10 @@ class ScriptedChatModel(BaseChatModel):
             raise RuntimeError(self.fail_with)
         human = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         prompt = human.text if human else ""
-        text = self.answers.get(prompt, self.default)
+        # Match on the longest known question contained in the (possibly templated) user turn, so the
+        # answer does not depend on how the managed prompt wraps the question.
+        matches = [key for key in self.answers if key in prompt]
+        text = self.answers[max(matches, key=len)] if matches else self.default
         n_in, n_out = len(prompt.split()), len(text.split())
         message = AIMessage(
             content=text,
